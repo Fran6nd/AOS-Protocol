@@ -36,6 +36,11 @@ Wire-format reference for AoS network protocol version 0.75. Transport is ENet o
 | [17. Chat Message](#17-chat-message) | S↔C | in-game | `id` u8, `pid` u8, `chat_type` u8, `message` cp437 (NUL-terminated) | 0.75 | Player sends a chat line; server broadcasts to recipients (filtered by chat type). | `chat_type`: 0=all (white) 1=team (team colour) 2=system (red, server-only). |
 | [18. Map Start](#18-map-start) | S→C | map-transfer | `id` u8, `map_size` u32 LE | 0.75 | Server begins sending the map after ENet connect or on map advance. | `map_size` is the byte length of the upcoming compressed map stream (sum of all `Map Chunk` payloads). |
 | [19. Map Chunk](#19-map-chunk) | S→C | map-transfer | `id` u8, `data` bytes (DEFLATE/zlib map payload) | 0.75 | Repeated after `Map Start` until the entire compressed map has been transferred; the next packet is `State Data`. | Concatenate all chunk payloads in order, then zlib-decompress to obtain the AOS-format map. |
+| [20. Player Left](#20-player-left) | S→C | disconnect | `id` u8, `pid` u8 | 0.75 | A player disconnects (quit, kick, timeout). | Slot becomes free for reuse. |
+| [21. Territory Capture](#21-territory-capture) | S→C | in-game | `id` u8, `tent_id` u8, `winning` u8, `team` u8 | 0.75 | A team finishes capturing a Command Post in TC mode. | `winning`: 1 if this capture wins the round, else 0. `team`: 0=blue, 1=green. |
+| [22. Progress Bar](#22-progress-bar) | S→C | in-game | `id` u8, `tent_id` u8, `capturing_team` u8, `rate` i8, `progress` f32 LE | 0.75 | TC capture progress update for a contested Command Post. | `progress` 0.0–1.0. `rate` in 5%-per-second units; sign indicates direction (positive = capturing team gaining). |
+| [23. Intel Capture](#23-intel-capture) | S→C | in-game | `id` u8, `pid` u8, `winning` u8 | 0.75 | A player scores by bringing the enemy intel home (CTF). | `winning`: 1 if this capture wins the round, else 0. |
+| [24. Intel Pickup](#24-intel-pickup) | S→C | in-game | `id` u8, `pid` u8 | 0.75 | A player picks up the enemy intel (CTF). | Whose intel is implied by team membership. |
 
 ## Packet Details
 
@@ -394,6 +399,64 @@ The TC payload is padded to a fixed 16-territory area in piqueserver's writer (`
 | 1 | `data` | bytes | DEFLATE / zlib payload chunk |
 
 The client concatenates all `data` payloads in order, then zlib-decompresses to recover the AOS-format map (column-major voxel + colour data).
+
+### 20. Player Left
+
+- **ID:** `0x14` · **Direction:** S→C · **Phase:** disconnect · **Introduced:** 0.75 · **Size:** 2 bytes
+- **Trigger:** A player disconnects (graceful quit, server kick, or ENet timeout). Slot is now free.
+
+| Offset | Field | Type | Description |
+|---|---|---|---|
+| 0 | `packet_id` | u8 | `0x14` |
+| 1 | `player_id` | u8 | which slot left |
+
+### 21. Territory Capture
+
+- **ID:** `0x15` · **Direction:** S→C · **Phase:** in-game · **Introduced:** 0.75 · **Size:** 4 bytes
+- **Trigger:** A team completes capturing a Command Post in Territory Control mode.
+
+| Offset | Field | Type | Description |
+|---|---|---|---|
+| 0 | `packet_id` | u8 | `0x15` |
+| 1 | `tent_id` | u8 | index into the territory list from `State Data` |
+| 2 | `winning` | u8 | 1 = this capture wins the round, 0 = does not |
+| 3 | `team` | u8 | 0 = blue captured, 1 = green captured |
+
+Note: the original web spec lists a 5-byte form including a player ID; both `piqueserver` and `BetterSpades` implement the 4-byte form (no player ID). The 4-byte form is what is actually on the wire.
+
+### 22. Progress Bar
+
+- **ID:** `0x16` · **Direction:** S→C · **Phase:** in-game · **Introduced:** 0.75 · **Size:** 8 bytes
+- **Trigger:** TC capture progress update for a contested Command Post (sent while progress changes).
+
+| Offset | Field | Type | Description |
+|---|---|---|---|
+| 0 | `packet_id` | u8 | `0x16` |
+| 1 | `tent_id` | u8 | index into the territory list |
+| 2 | `capturing_team` | u8 | 0 = blue, 1 = green |
+| 3 | `rate` | i8 (signed) | capture rate in 5%-per-second units; positive when the capturing team is making progress, negative when contested |
+| 4 | `progress` | f32 LE | normalised progress (0.0 – 1.0); 1.0 means a full capture is imminent |
+
+### 23. Intel Capture
+
+- **ID:** `0x17` · **Direction:** S→C · **Phase:** in-game · **Introduced:** 0.75 · **Size:** 3 bytes
+- **Trigger:** A player completes a CTF capture by returning the enemy intel to their tent.
+
+| Offset | Field | Type | Description |
+|---|---|---|---|
+| 0 | `packet_id` | u8 | `0x17` |
+| 1 | `player_id` | u8 | the capturing player |
+| 2 | `winning` | u8 | 1 = this capture wins the round, 0 = does not |
+
+### 24. Intel Pickup
+
+- **ID:** `0x18` · **Direction:** S→C · **Phase:** in-game · **Introduced:** 0.75 · **Size:** 2 bytes
+- **Trigger:** A player picks up the enemy intel.
+
+| Offset | Field | Type | Description |
+|---|---|---|---|
+| 0 | `packet_id` | u8 | `0x18` |
+| 1 | `player_id` | u8 | the picker (which intel is implied by their team — they pick up the *opposing* team's flag) |
 
 ## Sources
 
