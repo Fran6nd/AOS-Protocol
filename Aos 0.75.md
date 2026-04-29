@@ -41,6 +41,12 @@ Wire-format reference for AoS network protocol version 0.75. Transport is ENet o
 | [22. Progress Bar](#22-progress-bar) | S→C | in-game | `id` u8, `tent_id` u8, `capturing_team` u8, `rate` i8, `progress` f32 LE | 0.75 | TC capture progress update for a contested Command Post. | `progress` 0.0–1.0. `rate` in 5%-per-second units; sign indicates direction (positive = capturing team gaining). |
 | [23. Intel Capture](#23-intel-capture) | S→C | in-game | `id` u8, `pid` u8, `winning` u8 | 0.75 | A player scores by bringing the enemy intel home (CTF). | `winning`: 1 if this capture wins the round, else 0. |
 | [24. Intel Pickup](#24-intel-pickup) | S→C | in-game | `id` u8, `pid` u8 | 0.75 | A player picks up the enemy intel (CTF). | Whose intel is implied by team membership. |
+| [25. Intel Drop](#25-intel-drop) | S→C | in-game | `id` u8, `pid` u8, `x`/`y`/`z` f32 LE | 0.75 | The intel is dropped (carrier died, switched team, or disconnected). | Position is where the intel landed in the world. |
+| [26. Restock](#26-restock) | S→C | in-game | `id` u8, `pid` u8 | 0.75 | A player restocks at their tent (full ammo, blocks, grenades, HP). | Sent only to the restocked player. |
+| [27. Fog Colour](#27-fog-colour) | S→C | in-game | `id` u8, `alpha` u8, `b` u8, `g` u8, `r` u8 | 0.75 | Server sets the player's fog (sky/horizon) colour. | `alpha` byte is unused. Colour bytes are A,B,G,R order on the wire. |
+| [28. Weapon Reload](#28-weapon-reload) | S↔C | in-game | `id` u8, `pid` u8, `clip_ammo` u8, `reserve_ammo` u8 | 0.75 | A player reloads their weapon. | Client sends to start reload; server broadcasts updated counts. |
+| [29. Change Team](#29-change-team) | C→S | in-game | `id` u8, `pid` u8, `team` i8 | 0.75 | Client requests to switch teams. | Server responds with `Kill Action` (`kill_type=5`) then `Create Player`. `team`: 255=spectator, 0=blue, 1=green. |
+| [30. Change Weapon](#30-change-weapon) | C→S | in-game | `id` u8, `pid` u8, `weapon` u8 | 0.75 | Client requests to switch weapons. | Server responds with `Kill Action` (`kill_type=6`) then `Create Player`. `weapon`: 0=rifle, 1=SMG, 2=shotgun. |
 
 ## Packet Details
 
@@ -457,6 +463,76 @@ Note: the original web spec lists a 5-byte form including a player ID; both `piq
 |---|---|---|---|
 | 0 | `packet_id` | u8 | `0x18` |
 | 1 | `player_id` | u8 | the picker (which intel is implied by their team — they pick up the *opposing* team's flag) |
+
+### 25. Intel Drop
+
+- **ID:** `0x19` · **Direction:** S→C · **Phase:** in-game · **Introduced:** 0.75 · **Size:** 14 bytes
+- **Trigger:** The intel is dropped — the carrier died, switched teams, or disconnected.
+
+| Offset | Field | Type | Description |
+|---|---|---|---|
+| 0 | `packet_id` | u8 | `0x19` |
+| 1 | `player_id` | u8 | the former carrier |
+| 2 | `x` | f32 LE | drop world X |
+| 6 | `y` | f32 LE | drop world Y |
+| 10 | `z` | f32 LE | drop world Z |
+
+### 26. Restock
+
+- **ID:** `0x1A` · **Direction:** S→C · **Phase:** in-game · **Introduced:** 0.75 · **Size:** 2 bytes
+- **Trigger:** A player restocks at their tent — clip + reserve ammo, blocks, grenades, and HP all refill. Only the restocked player receives this packet.
+
+| Offset | Field | Type | Description |
+|---|---|---|---|
+| 0 | `packet_id` | u8 | `0x1A` |
+| 1 | `player_id` | u8 | the restocked player |
+
+### 27. Fog Colour
+
+- **ID:** `0x1B` · **Direction:** S→C · **Phase:** in-game · **Introduced:** 0.75 · **Size:** 5 bytes
+- **Trigger:** Server changes the fog (sky / horizon) colour for the receiving client.
+
+| Offset | Field | Type | Description |
+|---|---|---|---|
+| 0 | `packet_id` | u8 | `0x1B` |
+| 1 | `alpha` | u8 | unused, typically 0 |
+| 2 | `blue` | u8 | B channel |
+| 3 | `green` | u8 | G channel |
+| 4 | `red` | u8 | R channel |
+
+### 28. Weapon Reload
+
+- **ID:** `0x1C` · **Direction:** S↔C · **Phase:** in-game · **Introduced:** 0.75 · **Size:** 4 bytes
+- **Trigger:** Player reloads. Client sends a request when the player presses reload; server broadcasts the resulting clip / reserve counts to other clients (and updates the local player's UI).
+
+| Offset | Field | Type | Description |
+|---|---|---|---|
+| 0 | `packet_id` | u8 | `0x1C` |
+| 1 | `player_id` | u8 | who is reloading |
+| 2 | `clip_ammo` | u8 | rounds in clip after reload |
+| 3 | `reserve_ammo` | u8 | rounds remaining in reserve |
+
+### 29. Change Team
+
+- **ID:** `0x1D` · **Direction:** C→S · **Phase:** in-game · **Introduced:** 0.75 · **Size:** 3 bytes
+- **Trigger:** Client requests a team change. The server response is **not** an echo of this packet; instead, it sends `Kill Action` with `kill_type = 5` (team change), then `Create Player` to respawn the player on the new team.
+
+| Offset | Field | Type | Description |
+|---|---|---|---|
+| 0 | `packet_id` | u8 | `0x1D` |
+| 1 | `player_id` | u8 | the requesting player |
+| 2 | `team` | i8 | 255 = spectator, 0 = blue, 1 = green |
+
+### 30. Change Weapon
+
+- **ID:** `0x1E` · **Direction:** C→S · **Phase:** in-game · **Introduced:** 0.75 · **Size:** 3 bytes
+- **Trigger:** Client requests a weapon change. As with `Change Team`, the server responds via `Kill Action` (`kill_type = 6`, class change) followed by `Create Player`.
+
+| Offset | Field | Type | Description |
+|---|---|---|---|
+| 0 | `packet_id` | u8 | `0x1E` |
+| 1 | `player_id` | u8 | the requesting player |
+| 2 | `weapon` | u8 | 0 = rifle, 1 = SMG, 2 = shotgun |
 
 ## Sources
 
