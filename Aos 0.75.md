@@ -539,10 +539,10 @@ Note: the original web spec lists a 5-byte form including a player ID; both `piq
 ## Sources
 
 - https://www.piqueserver.org/aosprotocol/protocol075.html
-- ../piqueserver/pyspades/contained.pyx
-- ../piqueserver/pyspades/loaders.pyx
-- ../piqueserver/pyspades/constants.py
-- ../zerospades/Sources/Client/NetClient.cpp
-- ../zerospades/Sources/Client/NetProtocol.h
-- ../BetterSpades/src/network.c
-- ../BetterSpades/src/network.h
+- piqueserver/pyspades/contained.pyx
+- piqueserver/pyspades/loaders.pyx
+- piqueserver/pyspades/constants.py
+- zerospades/Sources/Client/NetClient.cpp
+- zerospades/Sources/Client/NetProtocol.h
+- BetterSpades/src/network.c
+- BetterSpades/src/network.h
