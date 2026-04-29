@@ -26,6 +26,11 @@ Wire-format reference for AoS network protocol version 0.75. Transport is ENet o
 | [7. Set Tool](#7-set-tool) | S↔C | in-game | `id` u8, `pid` u8, `tool` u8 | 0.75 | Player switches active tool (1–4 keys). | `tool`: 0=spade 1=block 2=gun 3=grenade. |
 | [8. Set Colour](#8-set-colour) | S↔C | in-game | `id` u8, `pid` u8, `b` u8, `g` u8, `r` u8 | 0.75 | Player picks a new block colour. | BGR byte order on the wire. |
 | [9. Existing Player](#9-existing-player) | S↔C | handshake / in-game | `id` u8, `pid` u8, `team` i8, `weapon` u8, `tool` u8, `kills` u32 LE, `b`/`g`/`r` u8, `name` cp437 (≤16, NUL-terminated) | 0.75 | C→S: new player announces itself on join. S→C: server tells a client about each already-connected player. | `team`: 255=spectator, 0=blue, 1=green. `weapon`: 0=rifle 1=smg 2=shotgun. `tool`: 0=spade 1=block 2=gun 3=grenade. |
+| [10. Short Player Data](#10-short-player-data) | S→C | in-game | `id` u8, `pid` u8, `team` i8, `weapon` u8 | 0.75 | Compact roster update (after team/weapon change). | Same `team` / `weapon` enums as packet 9. |
+| [11. Move Object](#11-move-object) | S→C | in-game | `id` u8, `object_id` u8, `team` u8, `x`/`y`/`z` f32 LE | 0.75 | A game object (tent or intel) is teleported / repositioned. | `team`: 0=blue, 1=green, 2=neutral. `object_id` enumerates intels and tents (see detail). |
+| [12. Create Player](#12-create-player) | S→C | handshake / in-game | `id` u8, `pid` u8, `weapon` u8, `team` i8, `x`/`y`/`z` f32 LE, `name` cp437 (NUL-terminated) | 0.75 | Player spawns: first spawn after join, or respawn after death / team change. | Spawn position is in world units. |
+| [13. Block Action](#13-block-action) | S↔C | in-game | `id` u8, `pid` u8, `action` u8, `x`/`y`/`z` i32 LE | 0.75 | Block placement or destruction. Client sends on action, server validates and broadcasts. | `action`: 0=build, 1=bullet/spade destroy (1 block), 2=spade destroy (3-block column), 3=grenade destroy (3×3×3). |
+| [14. Block Line](#14-block-line) | S↔C | in-game | `id` u8, `pid` u8, `start_xyz` i32×3 LE, `end_xyz` i32×3 LE | 0.75 | Client requests a line of blocks between two points (block-tool line draw). | Server fills the voxel line between the two integer block coordinates. |
 
 ## Packet Details
 
@@ -194,6 +199,98 @@ Note: the colour bytes appear on the wire in **BGR** order, not RGB.
 | 5 | `kills` | u32 LE | kill count |
 | 9 | `blue` / `green` / `red` | 3 × u8 | block colour, BGR order |
 | 12 | `name` | cp437, NUL-terminated, ≤16 bytes | player nickname |
+
+### 10. Short Player Data
+
+- **ID:** `0x0A` · **Direction:** S→C · **Phase:** in-game · **Introduced:** 0.75 · **Size:** 4 bytes
+- **Trigger:** Compact roster update — sent when only team/weapon attributes need to be refreshed.
+
+| Offset | Field | Type | Description |
+|---|---|---|---|
+| 0 | `packet_id` | u8 | `0x0A` |
+| 1 | `player_id` | u8 | which slot |
+| 2 | `team` | i8 | 255 = spectator, 0 = blue, 1 = green |
+| 3 | `weapon` | u8 | 0 = rifle, 1 = SMG, 2 = shotgun |
+
+### 11. Move Object
+
+- **ID:** `0x0B` · **Direction:** S→C · **Phase:** in-game · **Introduced:** 0.75 · **Size:** 15 bytes
+- **Trigger:** A game object (intel or tent / command post) is moved or reset (e.g. intel returned).
+
+| Offset | Field | Type | Description |
+|---|---|---|---|
+| 0 | `packet_id` | u8 | `0x0B` |
+| 1 | `object_id` | u8 | object index (see below) |
+| 2 | `team` | u8 | 0 = blue, 1 = green, 2 = neutral |
+| 3 | `x` | f32 LE | world X |
+| 7 | `y` | f32 LE | world Y |
+| 11 | `z` | f32 LE | world Z |
+
+Object index meaning (CTF mode):
+
+| `object_id` | Object |
+|---|---|
+| 0 | blue team intel |
+| 1 | green team intel |
+| 2 | blue team tent (base) |
+| 3 | green team tent (base) |
+
+In Territory Control, `object_id` indexes the territory list from `State Data`.
+
+### 12. Create Player
+
+- **ID:** `0x0C` · **Direction:** S→C · **Phase:** handshake (first spawn) / in-game (respawn) · **Introduced:** 0.75 · **Size:** variable
+- **Trigger:** Player enters the world: first spawn after the joining handshake completes, or respawn after death, team change, or weapon change.
+
+| Offset | Field | Type | Description |
+|---|---|---|---|
+| 0 | `packet_id` | u8 | `0x0C` |
+| 1 | `player_id` | u8 | which slot |
+| 2 | `weapon` | u8 | 0 = rifle, 1 = SMG, 2 = shotgun |
+| 3 | `team` | i8 | 255 = spectator, 0 = blue, 1 = green |
+| 4 | `x` | f32 LE | spawn world X |
+| 8 | `y` | f32 LE | spawn world Y |
+| 12 | `z` | f32 LE | spawn world Z |
+| 16 | `name` | cp437, NUL-terminated | player nickname |
+
+### 13. Block Action
+
+- **ID:** `0x0D` · **Direction:** S↔C · **Phase:** in-game · **Introduced:** 0.75 · **Size:** 15 bytes
+- **Trigger:** Block placement or destruction. Client sends on player action; server validates and broadcasts to other clients.
+
+| Offset | Field | Type | Description |
+|---|---|---|---|
+| 0 | `packet_id` | u8 | `0x0D` |
+| 1 | `player_id` | u8 | who acted |
+| 2 | `action` | u8 | see enum below |
+| 3 | `x` | i32 LE | block X (voxel coordinate) |
+| 7 | `y` | i32 LE | block Y |
+| 11 | `z` | i32 LE | block Z |
+
+`action`:
+
+| Value | Meaning |
+|---|---|
+| 0 | build (place a block at X,Y,Z) |
+| 1 | bullet / spade destroy (single block) |
+| 2 | spade destroy — column of 3 blocks (the block plus the two below) |
+| 3 | grenade destroy — 3×3×3 cube centred on X,Y,Z |
+
+### 14. Block Line
+
+- **ID:** `0x0E` · **Direction:** S↔C · **Phase:** in-game · **Introduced:** 0.75 · **Size:** 26 bytes
+- **Trigger:** Block-tool line draw — client requests a line of blocks between two voxel coordinates (the start and current position when the block tool is dragged). Server validates and broadcasts.
+
+| Offset | Field | Type | Description |
+|---|---|---|---|
+| 0 | `packet_id` | u8 | `0x0E` |
+| 1 | `player_id` | u8 | who is placing |
+| 2 | `start_x` | i32 LE | first endpoint X |
+| 6 | `start_y` | i32 LE | first endpoint Y |
+| 10 | `start_z` | i32 LE | first endpoint Z |
+| 14 | `end_x` | i32 LE | second endpoint X |
+| 18 | `end_y` | i32 LE | second endpoint Y |
+| 22 | `end_z` | i32 LE | second endpoint Z |
 
 ## Sources
 
