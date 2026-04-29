@@ -31,6 +31,11 @@ Wire-format reference for AoS network protocol version 0.75. Transport is ENet o
 | [12. Create Player](#12-create-player) | S→C | handshake / in-game | `id` u8, `pid` u8, `weapon` u8, `team` i8, `x`/`y`/`z` f32 LE, `name` cp437 (NUL-terminated) | 0.75 | Player spawns: first spawn after join, or respawn after death / team change. | Spawn position is in world units. |
 | [13. Block Action](#13-block-action) | S↔C | in-game | `id` u8, `pid` u8, `action` u8, `x`/`y`/`z` i32 LE | 0.75 | Block placement or destruction. Client sends on action, server validates and broadcasts. | `action`: 0=build, 1=bullet/spade destroy (1 block), 2=spade destroy (3-block column), 3=grenade destroy (3×3×3). |
 | [14. Block Line](#14-block-line) | S↔C | in-game | `id` u8, `pid` u8, `start_xyz` i32×3 LE, `end_xyz` i32×3 LE | 0.75 | Client requests a line of blocks between two points (block-tool line draw). | Server fills the voxel line between the two integer block coordinates. |
+| [15. State Data](#15-state-data) | S→C | handshake | `id` u8, `pid` u8, `fog_bgr` u8×3, `team1_bgr` u8×3, `team2_bgr` u8×3, `team1_name` cp437(10), `team2_name` cp437(10), `gamemode` u8, *gamemode state* | 0.75 | Final packet of the join handshake (after the last `Map Chunk`); also delivers gamemode parameters. | `gamemode`: 0=CTF, 1=TC. Trailing payload is `CTF State` (52 B) or `TC State` (variable). |
+| [16. Kill Action](#16-kill-action) | S→C | in-game | `id` u8, `victim_pid` u8, `killer_pid` u8, `kill_type` u8, `respawn_time` u8 | 0.75 | A player dies (any cause) or is forcibly removed via team/class change. | `kill_type`: 0=weapon 1=headshot 2=melee 3=grenade 4=fall 5=team change 6=class change. `respawn_time` in seconds. |
+| [17. Chat Message](#17-chat-message) | S↔C | in-game | `id` u8, `pid` u8, `chat_type` u8, `message` cp437 (NUL-terminated) | 0.75 | Player sends a chat line; server broadcasts to recipients (filtered by chat type). | `chat_type`: 0=all (white) 1=team (team colour) 2=system (red, server-only). |
+| [18. Map Start](#18-map-start) | S→C | map-transfer | `id` u8, `map_size` u32 LE | 0.75 | Server begins sending the map after ENet connect or on map advance. | `map_size` is the byte length of the upcoming compressed map stream (sum of all `Map Chunk` payloads). |
+| [19. Map Chunk](#19-map-chunk) | S→C | map-transfer | `id` u8, `data` bytes (DEFLATE/zlib map payload) | 0.75 | Repeated after `Map Start` until the entire compressed map has been transferred; the next packet is `State Data`. | Concatenate all chunk payloads in order, then zlib-decompress to obtain the AOS-format map. |
 
 ## Packet Details
 
@@ -291,6 +296,104 @@ In Territory Control, `object_id` indexes the territory list from `State Data`.
 | 14 | `end_x` | i32 LE | second endpoint X |
 | 18 | `end_y` | i32 LE | second endpoint Y |
 | 22 | `end_z` | i32 LE | second endpoint Z |
+
+### 15. State Data
+
+- **ID:** `0x0F` · **Direction:** S→C · **Phase:** handshake · **Introduced:** 0.75 · **Size:** variable (≥ 52 bytes; 104 B with CTF state, more with TC state)
+- **Trigger:** Sent once after the last `Map Chunk` to signal that the join is complete and to deliver gamemode parameters.
+
+| Offset | Field | Type | Description |
+|---|---|---|---|
+| 0 | `packet_id` | u8 | `0x0F` |
+| 1 | `player_id` | u8 | the receiving client's assigned slot |
+| 2 | `fog_bgr` | 3 × u8 | fog colour (BGR order) |
+| 5 | `team1_bgr` | 3 × u8 | blue team colour (BGR) |
+| 8 | `team2_bgr` | 3 × u8 | green team colour (BGR) |
+| 11 | `team1_name` | cp437, 10 bytes (NUL-padded) | blue team name |
+| 21 | `team2_name` | cp437, 10 bytes (NUL-padded) | green team name |
+| 31 | `gamemode` | u8 | 0 = CTF, 1 = TC |
+| 32 | *gamemode state* | variable | `CTF State` (52 bytes) or `TC State` (variable) |
+
+**CTF State** (when `gamemode == 0`, 52 bytes):
+
+| Offset (rel.) | Field | Type | Description |
+|---|---|---|---|
+| 0 | `team1_score` | u8 | blue caps |
+| 1 | `team2_score` | u8 | green caps |
+| 2 | `cap_limit` | u8 | caps to win |
+| 3 | `intel_flags` | u8 | bit 0 = team1 has team2's intel, bit 1 = team2 has team1's intel |
+| 4 | `team1_intel` | 12 bytes | if blue holds green's intel, that section is bit 1 of `intel_flags`; here: when `intel_flags & 1` (green holds blue intel) → carrier `player_id` u8 + 11 padding bytes; otherwise → `x`/`y`/`z` f32 LE (dropped position) |
+| 16 | `team2_intel` | 12 bytes | mirror of above for green's intel |
+| 28 | `team1_base` | 3 × f32 LE | blue tent (base) position |
+| 40 | `team2_base` | 3 × f32 LE | green tent (base) position |
+
+**TC State** (when `gamemode == 1`, variable):
+
+| Offset (rel.) | Field | Type | Description |
+|---|---|---|---|
+| 0 | `territory_count` | u8 | 0–16 |
+| 1 | `territories[]` | 13 × `territory_count` | each entry: `x`/`y`/`z` f32 LE + `team` u8 (0 = blue, 1 = green, 2 = neutral) |
+
+The TC payload is padded to a fixed 16-territory area in piqueserver's writer (`MAX_TERRITORIES * 13 = 208` bytes after the count), but readers should consume only `territory_count` entries.
+
+### 16. Kill Action
+
+- **ID:** `0x10` · **Direction:** S→C · **Phase:** in-game · **Introduced:** 0.75 · **Size:** 5 bytes
+- **Trigger:** A player dies. Also used as the server's response when a client requests a team change (`Change Team`) or weapon change (`Change Weapon`) — the server kills the player, then respawns them via `Create Player`.
+
+| Offset | Field | Type | Description |
+|---|---|---|---|
+| 0 | `packet_id` | u8 | `0x10` |
+| 1 | `victim_pid` | u8 | who died |
+| 2 | `killer_pid` | u8 | attributed killer (= `victim_pid` for self-inflicted causes) |
+| 3 | `kill_type` | u8 | see enum below |
+| 4 | `respawn_time` | u8 | seconds until the victim respawns |
+
+`kill_type`:
+
+| Value | Meaning |
+|---|---|
+| 0 | weapon (body shot) |
+| 1 | headshot |
+| 2 | melee (spade) |
+| 3 | grenade |
+| 4 | fall damage |
+| 5 | team change |
+| 6 | class / weapon change |
+
+### 17. Chat Message
+
+- **ID:** `0x11` · **Direction:** S↔C · **Phase:** in-game · **Introduced:** 0.75 · **Size:** variable (≥ 4 bytes)
+- **Trigger:** Player sends a chat line; server broadcasts to recipients. Server also originates `chat_type = 2` system messages.
+
+| Offset | Field | Type | Description |
+|---|---|---|---|
+| 0 | `packet_id` | u8 | `0x11` |
+| 1 | `player_id` | u8 | sender (255 / 0xFF when the server is the sender for system messages) |
+| 2 | `chat_type` | u8 | 0 = all chat, 1 = team chat, 2 = system message |
+| 3 | `message` | cp437, NUL-terminated | message body |
+
+### 18. Map Start
+
+- **ID:** `0x12` · **Direction:** S→C · **Phase:** map-transfer · **Introduced:** 0.75 · **Size:** 5 bytes
+- **Trigger:** Sent once at the start of the map transfer (right after ENet connect, or when the server advances to a new map).
+
+| Offset | Field | Type | Description |
+|---|---|---|---|
+| 0 | `packet_id` | u8 | `0x12` |
+| 1 | `map_size` | u32 LE | total length in bytes of the upcoming compressed map stream |
+
+### 19. Map Chunk
+
+- **ID:** `0x13` · **Direction:** S→C · **Phase:** map-transfer · **Introduced:** 0.75 · **Size:** variable (1 byte header + payload)
+- **Trigger:** Repeated zero or more times after `Map Start` until the full compressed map has been delivered. The next packet after the final chunk is `State Data`.
+
+| Offset | Field | Type | Description |
+|---|---|---|---|
+| 0 | `packet_id` | u8 | `0x13` |
+| 1 | `data` | bytes | DEFLATE / zlib payload chunk |
+
+The client concatenates all `data` payloads in order, then zlib-decompresses to recover the AOS-format map (column-major voxel + colour data).
 
 ## Sources
 
