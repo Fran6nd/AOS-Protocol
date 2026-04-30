@@ -10,7 +10,7 @@ AoS 0.76 is a stateful, server-authoritative protocol for a 32-slot multiplayer 
 - **Encoding:** little-endian integers and floats; CP437 strings, NUL-terminated unless explicitly sized.
 - **Capacity:** up to 32 player slots (`player_id` 0–31).
 - **Authority:** the server validates and broadcasts state; client packets are requests, never authoritative.
-- **Discovery:** out-of-band via the master server / serverlist (see [Master Server & Serverlist](#master-server--serverlist)).
+- **Discovery:** servers register themselves with the master server over ENet; clients fetch the serverlist from it over HTTP and pick a server from the returned JSON. The in-game protocol does not handle discovery — both ends rely on this out-of-band channel to find each other (see [Master Server & Serverlist](#master-server--serverlist)).
 
 Differences from 0.75:
 
