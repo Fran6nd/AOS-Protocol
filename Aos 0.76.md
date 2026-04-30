@@ -2,6 +2,16 @@
 
 Wire-format reference for AoS network protocol version 0.76.
 
+## Chapters
+
+1. [Summary](#summary) — high-level overview of the protocol.
+2. [Phases](#phases) — the four lifecycle phases of a session.
+3. [Packet Summary](#packet-summary) — one-row-per-packet reference table.
+4. [Packet Details](#packet-details) — byte-level breakdown of every packet.
+5. [Master Server & Serverlist](#master-server--serverlist) — out-of-band server discovery.
+6. [Protocol Extensions](#protocol-extensions) — optional negotiated capabilities layered over the base protocol.
+7. [Sources](#sources) — references used to compile this document.
+
 ## Summary
 
 AoS 0.76 is a stateful, server-authoritative protocol for a 32-slot multiplayer voxel shooter, and a small superset of [0.75](Aos%200.75.md). A session moves through four phases — handshake, map transfer, in-game, disconnect — exchanging fixed-format binary packets identified by a single-byte ID.
@@ -20,16 +30,6 @@ Differences from 0.75:
 - **Map Cached** is new — the client tells the server whether the map (identified by CRC32 from `Map Start`) is already cached locally, so the server can skip retransmitting `Map Chunk` frames.
 
 All other packets are byte-for-byte identical to 0.75; the `Introduced` column in [Packet Summary](#packet-summary) reflects each packet's first-appearance version.
-
-### Chapters
-
-1. [Summary](#summary) — this overview.
-2. [Phases](#phases) — the four lifecycle phases of a session.
-3. [Packet Summary](#packet-summary) — one-row-per-packet reference table.
-4. [Packet Details](#packet-details) — byte-level breakdown of every packet.
-5. [Master Server & Serverlist](#master-server--serverlist) — out-of-band server discovery.
-6. [Protocol Extensions](#protocol-extensions) — optional negotiated capabilities layered over the base protocol.
-7. [Sources](#sources) — references used to compile this document.
 
 ## Phases
 

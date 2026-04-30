@@ -2,6 +2,16 @@
 
 Wire-format reference for AoS network protocol version 0.75.
 
+## Chapters
+
+1. [Summary](#summary) — high-level overview of the protocol.
+2. [Phases](#phases) — the four lifecycle phases of a session.
+3. [Packet Summary](#packet-summary) — one-row-per-packet reference table.
+4. [Packet Details](#packet-details) — byte-level breakdown of every packet.
+5. [Master Server & Serverlist](#master-server--serverlist) — out-of-band server discovery.
+6. [Protocol Extensions](#protocol-extensions) — optional negotiated capabilities layered over the base protocol.
+7. [Sources](#sources) — references used to compile this document.
+
 ## Summary
 
 AoS 0.75 is a stateful, server-authoritative protocol for a 32-slot multiplayer voxel shooter. A session moves through four phases — handshake, map transfer, in-game, disconnect — exchanging fixed-format binary packets identified by a single-byte ID.
@@ -12,16 +22,6 @@ AoS 0.75 is a stateful, server-authoritative protocol for a 32-slot multiplayer 
 - **Authority:** the server validates and broadcasts state; client packets are requests, never authoritative.
 - **Discovery:** servers register themselves with the master server over ENet; clients fetch the serverlist from it over HTTP and pick a server from the returned JSON. The in-game protocol does not handle discovery — both ends rely on this out-of-band channel to find each other (see [Master Server & Serverlist](#master-server--serverlist)).
 - **Extensions:** an optional pre-game handshake lets a client and server negotiate additional capabilities (extra player stats, larger player cap, richer chat, kick reasons, authentication). Vanilla peers skip it and run on the base protocol (see [Protocol Extensions](#protocol-extensions)).
-
-### Chapters
-
-1. [Summary](#summary) — this overview.
-2. [Phases](#phases) — the four lifecycle phases of a session.
-3. [Packet Summary](#packet-summary) — one-row-per-packet reference table.
-4. [Packet Details](#packet-details) — byte-level breakdown of every packet.
-5. [Master Server & Serverlist](#master-server--serverlist) — out-of-band server discovery.
-6. [Protocol Extensions](#protocol-extensions) — optional negotiated capabilities layered over the base protocol.
-7. [Sources](#sources) — references used to compile this document.
 
 ## Phases
 
