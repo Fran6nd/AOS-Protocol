@@ -11,7 +11,7 @@ AoS 0.76 is a stateful, server-authoritative protocol for a 32-slot multiplayer 
 - **Capacity:** up to 32 player slots in the base protocol (`player_id` 0–31); extendable to 256 via the `0xC0` extension.
 - **Authority:** the server validates and broadcasts state; client packets are requests, never authoritative.
 - **Discovery:** servers register themselves with the master server over ENet; clients fetch the serverlist from it over HTTP and pick a server from the returned JSON. The in-game protocol does not handle discovery — both ends rely on this out-of-band channel to find each other (see [Master Server & Serverlist](#master-server--serverlist)).
-- **Extensions:** an optional pre-game handshake lets a client and server negotiate additional capabilities (extra player stats, larger player cap, richer chat, kick reasons, authentication). Vanilla peers skip it and run on the base protocol (see [Extensions](#extensions)).
+- **Extensions:** an optional pre-game handshake lets a client and server negotiate additional capabilities (extra player stats, larger player cap, richer chat, kick reasons, authentication). Vanilla peers skip it and run on the base protocol (see [Protocol Extensions](#protocol-extensions)).
 
 Differences from 0.75:
 
@@ -20,6 +20,16 @@ Differences from 0.75:
 - **Map Cached** is new — the client tells the server whether the map (identified by CRC32 from `Map Start`) is already cached locally, so the server can skip retransmitting `Map Chunk` frames.
 
 All other packets are byte-for-byte identical to 0.75; the `Introduced` column in [Packet Summary](#packet-summary) reflects each packet's first-appearance version.
+
+### Chapters
+
+1. [Summary](#summary) — this overview.
+2. [Phases](#phases) — the four lifecycle phases of a session.
+3. [Packet Summary](#packet-summary) — one-row-per-packet reference table.
+4. [Packet Details](#packet-details) — byte-level breakdown of every packet.
+5. [Master Server & Serverlist](#master-server--serverlist) — out-of-band server discovery.
+6. [Protocol Extensions](#protocol-extensions) — optional negotiated capabilities layered over the base protocol.
+7. [Sources](#sources) — references used to compile this document.
 
 ## Phases
 
@@ -637,7 +647,7 @@ The client connects to the chosen entry's `identifier` over ENet, using the in-g
 
 Servers may opt out of registration and run unlisted (reachable only by direct address). The master and serverlist services are third-party-operated; outages affect discovery but not the in-game protocol itself.
 
-## Extensions
+## Protocol Extensions
 
 The protocol supports an optional capability-negotiation mechanism that lets a client and server announce additional features they both implement. Extensions sit on top of the base in-game protocol and are not gated on protocol version — they apply equally to 0.75 and 0.76. A peer that does not understand the extension packet simply ignores it; the session falls back to the base protocol.
 
@@ -702,7 +712,7 @@ This ID also identifies `Map Cached` in 0.76. Disambiguation is by phase — `Ha
 | 1 | `count` | u8 | number of extension entries that follow |
 | 2 | `entries` | `count` × (u8 `id`, u8 `version`) | supported extensions |
 
-### Defined extensions
+### Defined Extensions
 
 Extension IDs split into two ranges:
 
@@ -747,7 +757,7 @@ Documented in the master-list archive but not implemented in any surveyed client
 
 The handshake establishes a public-key identity for the player so the server can verify they match a known account.
 
-### Implementation status
+### Implementation Status
 
 Rows are extensions; columns are surveyed implementations. **C** = client, **S** = server. `✓` = advertises the extension; `–` = does not.
 
