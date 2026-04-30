@@ -625,6 +625,20 @@ Servers may opt out of registration and run unlisted (reachable only by direct a
 
 The protocol supports an optional capability-negotiation mechanism that lets a client and server announce additional features they both implement. Extensions sit on top of the base in-game protocol and are not gated on protocol version — they apply equally to 0.75 and 0.76. A peer that does not understand the extension packet simply ignores it; the session falls back to the base protocol.
 
+### Extension Packet Summary
+
+Same column schema as [Packet Summary](#packet-summary). The `Introduced` column is `any` because extensions apply to both 0.75 and 0.76 sessions.
+
+| Packet Name | Direction | Phase | Structure | Introduced | Trigger | Field Values |
+|---|---|---|---|---|---|---|
+| [Handshake Init](#handshake-init) | S→C | handshake | `id` u8, `challenge` u32 LE | any | First packet from an extension-aware server after ENet connect. | piqueserver sends `42`. |
+| [Handshake Return](#handshake-return) | C→S | handshake | `id` u8, `challenge` u32 LE | any | Client reply to `Handshake Init`. | Echoes the challenge unchanged. |
+| [Version Request](#version-request) | S→C | handshake | `id` u8 | any | Sent after receiving `Handshake Return`. | No payload. |
+| [Version Response](#version-response) | C→S | handshake | `id` u8, `client` u8, `major`/`minor`/`patch` u8, `os_info` cp437 (NUL-terminated) | any | Client reply to `Version Request`. | `client`: `'o'`=zerospades / OpenSpades, `'B'`=BetterSpades, `'a'`=ACE. |
+| [Protocol Extension Info](#protocol-extension-info) | S↔C | handshake | `id` u8, `count` u8, `count` × (u8 `id`, u8 `version`) | any | Once per peer, after `Version Response`. | Intersection of both lists is the active extension set for the session. |
+| [Player Properties](#player-properties-extension-0x00-packet-0x40) | S→C | in-game | `id` u8, `sub_id` u8, `pid` u8, `hp` u8, `blocks` u8, `grenades` u8, `ammo_clip` u8, `ammo_reserve` u8, `score` u32 LE | any | Server pushes when a tracked stat changes. | Extension `0x00`. `sub_id` always `0`. |
+| [Ed25519 Authentication](#ed25519-authentication-extension-0x01-packet-0x41) | S↔C | handshake | `id` u8, `sub_id` u8, *sub-ID-dependent payload* | any | `sub_id` 0–4 carry the auth-handshake stages. | Extension `0x01`. Documented but not implemented in surveyed code. |
+
 ### Negotiation
 
 After ENet connect, an extension-aware server runs a four-packet pre-game handshake (Handshake Init/Return, then Version Request/Response) before the base protocol's `Map Start`. A vanilla 0.75 client/server skips this entirely and proceeds straight to the map transfer. Once both sides have identified themselves with `Version Response`, each sends a `Protocol Extension Info` packet listing the extension IDs it supports; the intersection of the two lists is the set of extensions honoured for the rest of the session.
