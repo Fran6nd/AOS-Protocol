@@ -635,17 +635,17 @@ The protocol supports an optional capability-negotiation mechanism that lets a c
 
 ### Extension Packet Summary
 
-Same column schema as [Packet Summary](#packet-summary). The `Introduced` column is `any` because extensions apply to both 0.75 and 0.76 sessions.
+Same column schema as [Packet Summary](#packet-summary). Extensions apply to both 0.75 and 0.76 sessions, so no `Introduced` column is needed.
 
-| Packet Name | Direction | Phase | Structure | Introduced | Trigger | Field Values |
-|---|---|---|---|---|---|---|
-| [Handshake Init](#handshake-init) | S→C | handshake | `id` u8, `challenge` u32 LE | any | First packet from an extension-aware server after ENet connect. | piqueserver sends `42`. |
-| [Handshake Return](#handshake-return) | C→S | handshake | `id` u8, `challenge` u32 LE | any | Client reply to `Handshake Init`. | Echoes the challenge unchanged. |
-| [Version Request](#version-request) | S→C | handshake | `id` u8 | any | Sent after receiving `Handshake Return`. | No payload. |
-| [Version Response](#version-response) | C→S | handshake | `id` u8, `client` u8, `major`/`minor`/`patch` u8, `os_info` cp437 (NUL-terminated) | any | Client reply to `Version Request`. | `client`: `'o'`=zerospades / OpenSpades, `'B'`=BetterSpades, `'a'`=ACE. |
-| [Protocol Extension Info](#protocol-extension-info) | S↔C | handshake | `id` u8, `count` u8, `count` × (u8 `id`, u8 `version`) | any | Once per peer, after `Version Response`. | Intersection of both lists is the active extension set for the session. |
-| [Player Properties](#player-properties-extension-0x00-packet-0x40) | S→C | in-game | `id` u8, `sub_id` u8, `player_id` u8, `hp` u8, `blocks` u8, `grenades` u8, `ammo_clip` u8, `ammo_reserve` u8, `score` u32 LE | any | Server pushes when a tracked stat changes. | Extension `0x00`. `sub_id` always `0`. |
-| [Ed25519 Authentication](#ed25519-authentication-extension-0x01-packet-0x41) | S↔C | handshake | `id` u8, `sub_id` u8, *sub-ID-dependent payload* | any | `sub_id` 0–4 carry the auth-handshake stages. | Extension `0x01`. Documented but not implemented in surveyed code. |
+| Packet Name | Direction | Phase | Structure | Trigger | Field Values |
+|---|---|---|---|---|---|
+| [Handshake Init](#handshake-init) | S→C | handshake | `id` u8, `challenge` u32 LE | First packet from an extension-aware server after ENet connect. | piqueserver sends `42`. |
+| [Handshake Return](#handshake-return) | C→S | handshake | `id` u8, `challenge` u32 LE | Client reply to `Handshake Init`. | Echoes the challenge unchanged. |
+| [Version Request](#version-request) | S→C | handshake | `id` u8 | Sent after receiving `Handshake Return`. | No payload. |
+| [Version Response](#version-response) | C→S | handshake | `id` u8, `client` u8, `major`/`minor`/`patch` u8, `os_info` cp437 (NUL-terminated) | Client reply to `Version Request`. | `client`: `'o'`=zerospades / OpenSpades, `'B'`=BetterSpades, `'a'`=ACE. |
+| [Protocol Extension Info](#protocol-extension-info) | S↔C | handshake | `id` u8, `count` u8, `count` × (u8 `id`, u8 `version`) | Once per peer, after `Version Response`. | Intersection of both lists is the active extension set for the session. |
+| [Player Properties](#player-properties-extension-0x00-packet-0x40) | S→C | in-game | `id` u8, `sub_id` u8, `player_id` u8, `hp` u8, `blocks` u8, `grenades` u8, `ammo_clip` u8, `ammo_reserve` u8, `score` u32 LE | Server pushes when a tracked stat changes. | Extension `0x00`. `sub_id` always `0`. |
+| [Ed25519 Authentication](#ed25519-authentication-extension-0x01-packet-0x41) | S↔C | handshake | `id` u8, `sub_id` u8, *sub-ID-dependent payload* | `sub_id` 0–4 carry the auth-handshake stages. | Extension `0x01`. Documented but not implemented in surveyed code. |
 
 ### Capability Handshake Packets
 
