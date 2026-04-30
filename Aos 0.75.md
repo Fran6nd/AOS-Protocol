@@ -1,8 +1,18 @@
 # Ace of Spades 0.75 Protocol
 
-Wire-format reference for AoS network protocol version 0.75. Transport is ENet over UDP. All multi-byte integers and floats are little-endian unless otherwise noted. Strings are CP437-encoded.
+Wire-format reference for AoS network protocol version 0.75.
 
-Packets below are grouped by the phase they live in (`handshake` → `map-transfer` → `in-game` → `disconnect`) and ordered logically within each phase: the join sequence first, then movement/input, combat, loadout, world (blocks/grenades/objects), gamemode (CTF/TC), then chat / visuals, then leave.
+## Summary
+
+AoS 0.75 is a stateful, server-authoritative protocol for a 32-slot multiplayer voxel shooter. A session moves through four phases — handshake, map transfer, in-game, disconnect — exchanging fixed-format binary packets identified by a single-byte ID.
+
+- **Transport:** ENet over UDP. ENet handshake version `3` on the game port.
+- **Encoding:** little-endian integers and floats; CP437 strings, NUL-terminated unless explicitly sized.
+- **Capacity:** up to 32 player slots (`player_id` 0–31).
+- **Authority:** the server validates and broadcasts state; client packets are requests, never authoritative.
+- **Discovery:** out-of-band via the master server / serverlist (see [Master Server & Serverlist](#master-server--serverlist)).
+
+The four phases are described in [Phases](#phases). The full per-packet table is in [Packet Summary](#packet-summary), with byte-level breakdowns under [Packet Details](#packet-details).
 
 ## Phases
 
@@ -13,7 +23,9 @@ Packets below are grouped by the phase they live in (`handshake` → `map-transf
 | `in-game` | Player is alive or spectating in the world; gameplay packets flow. |
 | `disconnect` | Player is leaving (kick, quit, timeout). |
 
-## Summary
+## Packet Summary
+
+Packets are grouped by the phase they live in (`handshake` → `map-transfer` → `in-game` → `disconnect`) and ordered logically within each phase: the join sequence first, then movement/input, combat, loadout, world (blocks/grenades/objects), gamemode (CTF/TC), then chat / visuals, then leave.
 
 | Packet Name | Direction | Phase | Structure | Introduced | Trigger | Field Values |
 |---|---|---|---|---|---|---|
@@ -536,13 +548,80 @@ Note: the original web spec lists a 5-byte form including a player ID; both `piq
 | 0 | `packet_id` | u8 | `0x14` |
 | 1 | `player_id` | u8 | which slot left |
 
+## Master Server & Serverlist
+
+Alongside the in-game ENet session, AoS networking involves a **master server** that publishes the list of public game servers. Public servers register with one or more master hosts over ENet; clients fetch the list over HTTP. This mechanism is unchanged across 0.75 and 0.76 — the in-game protocol version a server speaks is reported separately in the serverlist as `game_version` (`3` for 0.75, `4` for 0.76).
+
+### Server → Master (Registration, ENet)
+
+Servers connect to one or more master hosts over ENet/UDP using master protocol version `31` (distinct from the in-game version on the game port). The connection is held open for the lifetime of the server and used to push player-count updates.
+
+Default master hosts (configurable per server):
+
+- `master.buildandshoot.com:32886`
+- `master1.aos.coffee:32886`
+- `master2.aos.coffee:32886`
+
+Only one packet flows on this channel.
+
+#### Add Server
+
+- **ID:** `0x04` · **Direction:** S→Master · **Trigger:** Initial registration on connect, then again whenever the player count changes.
+
+Two payload forms, distinguished by length.
+
+Initial registration:
+
+| Offset | Field | Type | Description |
+|---|---|---|---|
+| 0 | `packet_id` | u8 | `0x04` |
+| 1 | `max_players` | u8 | server slot capacity |
+| 2 | `port` | u16 LE | game port the server listens on |
+| 4 | `name` | cp437, NUL-terminated | server display name (≤31 bytes) |
+| ... | `game_mode` | cp437, NUL-terminated | game mode short name (≤7 bytes) |
+| ... | `map` | cp437, NUL-terminated | current map short name (≤20 bytes) |
+
+Player-count update (2 bytes total):
+
+| Offset | Field | Type | Description |
+|---|---|---|---|
+| 0 | `packet_id` | u8 | `0x04` |
+| 1 | `count` | u8 | current connected players |
+
+### Client → Master (Serverlist, HTTP)
+
+Clients fetch the advertised server list over HTTP rather than ENet.
+
+- **Endpoint:** `http://services.buildandshoot.com/serverlist.json`
+- **Method:** `GET`
+- **Format:** JSON array; one object per server. Fields used by the client:
+
+| Field | Description |
+|---|---|
+| `name` | server display name |
+| `identifier` | `aos://<host-int>:<port>` URI used to ENet-connect |
+| `map` | current map |
+| `game_mode` | current game mode |
+| `country` | ISO country code |
+| `game_version` | `"0.75"` or `"0.76"` — selects the in-game protocol the client uses |
+| `latency` | master-side latency measurement |
+| `players_current` | current player count |
+| `players_max` | max slot capacity |
+
+The client connects to the chosen entry's `identifier` over ENet, using the in-game protocol version matching `game_version`.
+
+Servers may opt out of registration and run unlisted (reachable only by direct address). The master and serverlist services are third-party-operated; outages affect discovery but not the in-game protocol itself.
+
 ## Sources
 
 - https://www.piqueserver.org/aosprotocol/protocol075.html
 - piqueserver/pyspades/contained.pyx
 - piqueserver/pyspades/loaders.pyx
 - piqueserver/pyspades/constants.py
+- piqueserver/pyspades/master.py
+- piqueserver/piqueserver/server.py
 - zerospades/Sources/Client/NetClient.cpp
 - zerospades/Sources/Client/NetProtocol.h
+- zerospades/Sources/Gui/MainScreenHelper.cpp
 - BetterSpades/src/network.c
 - BetterSpades/src/network.h
