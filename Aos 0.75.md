@@ -612,16 +612,89 @@ The client connects to the chosen entry's `identifier` over ENet, using the in-g
 
 Servers may opt out of registration and run unlisted (reachable only by direct address). The master and serverlist services are third-party-operated; outages affect discovery but not the in-game protocol itself.
 
+## Extensions
+
+The protocol supports an optional capability-negotiation mechanism that lets a client and server announce additional features they both implement. Extensions sit on top of the base in-game protocol and are not gated on protocol version — they apply equally to 0.75 and 0.76. A peer that does not understand the extension packet simply ignores it; the session falls back to the base protocol.
+
+### Negotiation
+
+After the existing version handshake (`Version Get` / `Version Response`), each side sends a `Protocol Extension Info` packet listing the extension IDs it supports. The intersection of the two lists is the set of extensions honoured for the rest of the session.
+
+### Protocol Extension Info
+
+- **ID:** `0x3C` (60) · **Direction:** S↔C · **Phase:** handshake · **Trigger:** Sent once during the handshake, after `Version Response`.
+
+| Offset | Field | Type | Description |
+|---|---|---|---|
+| 0 | `packet_id` | u8 | `0x3C` |
+| 1 | `count` | u8 | number of extension entries that follow |
+| 2 | `entries` | `count` × (u8 `id`, u8 `version`) | supported extensions |
+
+### Defined extensions
+
+Extension IDs split into two ranges:
+
+- **`0x00–0x3F`** — *with-packet* extensions: introduce a new packet whose ID is `0x40 + extension_id`.
+- **`0xC0–0xFF`** — *packetless* extensions: modify the semantics of existing packets or fields without adding new ones.
+
+| ID | Name | Range | Effect |
+|---|---|---|---|
+| `0x00` | Player Properties | with-packet (`0x40`) | Server pushes exact health / blocks / grenades / ammo / score per player. |
+| `0x01` | Ed25519 Authentication | with-packet | Cryptographic player authentication. Documented but unimplemented in surveyed code. |
+| `0xC0` | 256 Players (a.k.a. Player Limit) | packetless | Lifts the 32-slot cap, allowing `player_id` values above 31. |
+| `0xC1` | Message Types (a.k.a. Chat Type) | packetless | Adds extra `chat_type` values for system / server messages on the existing chat packet. |
+| `0xC2` | Kick Reason | packetless | Disconnect carries a reason string for the client to display. |
+
+### Player Properties (extension `0x00`, packet `0x40`)
+
+- **Direction:** S→C · **Phase:** in-game · **Trigger:** Server pushes when a tracked stat changes.
+
+| Offset | Field | Type | Description |
+|---|---|---|---|
+| 0 | `packet_id` | u8 | `0x40` |
+| 1 | `sub_id` | u8 | `0` = player stats (no other sub-IDs defined) |
+| 2 | `player_id` | u8 | target slot |
+| 3 | `health` | u8 | current HP |
+| 4 | `blocks` | u8 | blocks remaining |
+| 5 | `grenades` | u8 | grenades remaining |
+| 6 | `ammo_clip` | u8 | rounds in clip |
+| 7 | `ammo_reserve` | u8 | rounds in reserve |
+| 8 | `score` | u32 LE | kill count / score |
+
+### Implementation status
+
+Drawn from the source trees listed in [Sources](#sources). `✓` = advertises the extension; `–` = does not.
+
+| Implementation | Side | `0x00` Player Properties | `0xC0` 256 Players | `0xC1` Message Types | `0xC2` Kick Reason |
+|---|---|---|---|---|---|
+| piqueserver | Server | – | – | ✓ | – |
+| SpadesX | Server | – | – | – | – |
+| BetterSpades | Client | ✓ | ✓ | ✓ | ✓ |
+| zerospades | Client | ✓ | ✓ | – | ✓ |
+| OpenSpades | Client | – | ✓ | – | – |
+
+Notes:
+
+- piqueserver advertises only `0xC1` (Message Types) but parses any `Protocol Extension Info` payload from the client and stores the intersection per connection.
+- The `Player Properties` extension is implemented by zerospades and BetterSpades; OpenSpades does not handle the `0x40` packet.
+- The `Ed25519 Authentication` extension (`0x01`) is documented in the master-list archive but is not wired up in any surveyed client or server.
+
 ## Sources
 
 - https://www.piqueserver.org/aosprotocol/protocol075.html
+- https://66.135.15.57/masterlistarchive/lsdoc/extensions.html
+- https://66.135.15.57/masterlistarchive/lsdoc/structPacketExtensionInfo.html
 - piqueserver/pyspades/contained.pyx
 - piqueserver/pyspades/loaders.pyx
 - piqueserver/pyspades/constants.py
 - piqueserver/pyspades/master.py
+- piqueserver/pyspades/player.py
 - piqueserver/piqueserver/server.py
 - zerospades/Sources/Client/NetClient.cpp
+- zerospades/Sources/Client/NetClient.h
 - zerospades/Sources/Client/NetProtocol.h
 - zerospades/Sources/Gui/MainScreenHelper.cpp
+- openspades/Sources/Client/NetClient.cpp
+- openspades/Sources/Client/NetClient.h
 - BetterSpades/src/network.c
 - BetterSpades/src/network.h
