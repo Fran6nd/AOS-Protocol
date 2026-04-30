@@ -618,7 +618,54 @@ The protocol supports an optional capability-negotiation mechanism that lets a c
 
 ### Negotiation
 
-After the existing version handshake (`Version Get` / `Version Response`), each side sends a `Protocol Extension Info` packet listing the extension IDs it supports. The intersection of the two lists is the set of extensions honoured for the rest of the session.
+After ENet connect, an extension-aware server runs a four-packet pre-game handshake (Handshake Init/Return, then Version Request/Response) before the base protocol's `Map Start`. A vanilla 0.75 client/server skips this entirely and proceeds straight to the map transfer. Once both sides have identified themselves with `Version Response`, each sends a `Protocol Extension Info` packet listing the extension IDs it supports; the intersection of the two lists is the set of extensions honoured for the rest of the session.
+
+### Extension Handshake Packets
+
+These four packets exist only between extension-aware peers and run before any base-protocol traffic. They share IDs `31`–`34` (`0x1F`–`0x22`).
+
+#### Handshake Init
+
+- **ID:** `0x1F` (31) · **Direction:** S→C · **Phase:** handshake · **Trigger:** First packet from an extension-aware server after ENet connect.
+
+| Offset | Field | Type | Description |
+|---|---|---|---|
+| 0 | `packet_id` | u8 | `0x1F` |
+| 1 | `challenge` | u32 LE | challenge value (piqueserver uses `42`); echoed back in `Handshake Return`. |
+
+In 0.76 this ID also identifies `Map Cached`. Disambiguation is by phase — `Handshake Init` precedes `Map Start`; `Map Cached` only ever follows it.
+
+#### Handshake Return
+
+- **ID:** `0x20` (32) · **Direction:** C→S · **Phase:** handshake · **Trigger:** Sent in response to `Handshake Init`.
+
+| Offset | Field | Type | Description |
+|---|---|---|---|
+| 0 | `packet_id` | u8 | `0x20` |
+| 1 | `challenge` | u32 LE | the value received in `Handshake Init`, echoed unchanged. |
+
+#### Version Request
+
+- **ID:** `0x21` (33) · **Direction:** S→C · **Phase:** handshake · **Trigger:** Sent after `Handshake Return` is received.
+
+| Offset | Field | Type | Description |
+|---|---|---|---|
+| 0 | `packet_id` | u8 | `0x21` |
+
+(no payload)
+
+#### Version Response
+
+- **ID:** `0x22` (34) · **Direction:** C→S · **Phase:** handshake · **Trigger:** Sent in response to `Version Request`.
+
+| Offset | Field | Type | Description |
+|---|---|---|---|
+| 0 | `packet_id` | u8 | `0x22` |
+| 1 | `client` | u8 | client identifier char: `'o'` = OpenSpades / zerospades, `'B'` = BetterSpades, `'a'` = ACE. |
+| 2 | `version_major` | u8 | client major version |
+| 3 | `version_minor` | u8 | client minor version |
+| 4 | `version_patch` | u8 | client patch version |
+| 5 | `os_info` | cp437, NUL-terminated | OS / build description string |
 
 ### Protocol Extension Info
 
@@ -661,11 +708,25 @@ Extension IDs split into two ranges:
 | 7 | `ammo_reserve` | u8 | rounds in reserve |
 | 8 | `score` | u32 LE | kill count / score |
 
+### Ed25519 Authentication (extension `0x01`, packet `0x41`)
+
+Documented in the master-list archive but not implemented in any surveyed client or server. Packet ID `0x41` is multiplexed by a leading `sub_id` byte:
+
+| `sub_id` | Name | Direction | Size | Purpose |
+|---|---|---|---|---|
+| `0` | Request Authentication | S→C | 2 B | server prompts the client to authenticate |
+| `1` | End Authentication | S↔C | 4+ B | terminates the handshake; carries permission level on success |
+| `2` | Send Public Key | C→S | 34 B | client uploads its 32-byte Ed25519 public key |
+| `3` | Send Nonce | S→C | 3+ B | server sends a nonce for the client to sign |
+| `4` | Send Signature | C→S | 66 B | client returns the 64-byte Ed25519 signature over the nonce |
+
+The handshake establishes a public-key identity for the player so the server can verify they match a known account.
+
 ### Implementation status
 
-Drawn from the source trees listed in [Sources](#sources). `✓` = advertises the extension; `–` = does not.
+Rows are extensions; columns are surveyed implementations. **C** = client, **S** = server. `✓` = advertises the extension; `–` = does not.
 
-| Extension | piqueserver (S) | SpadesX (S) | BetterSpades (C) | zerospades (C) | OpenSpades (C) |
+| Extension | [piqueserver](https://www.piqueserver.org) (S) | [SpadesX](https://github.com/SpadesX) (S) | [BetterSpades](https://github.com/xtreme8000/BetterSpades) (C) | [zerospades](https://github.com/siecvi/zerospades) (C) | [OpenSpades](https://openspades.yvt.jp) (C) |
 |---|---|---|---|---|---|
 | `0x00` Player Properties | – | – | ✓ | ✓ | – |
 | `0xC0` 256 Players | – | – | ✓ | ✓ | ✓ |
@@ -676,24 +737,17 @@ Notes:
 
 - piqueserver advertises only `0xC1` (Message Types) but parses any `Protocol Extension Info` payload from the client and stores the intersection per connection.
 - The `Player Properties` extension is implemented by zerospades and BetterSpades; OpenSpades does not handle the `0x40` packet.
-- The `Ed25519 Authentication` extension (`0x01`) is documented in the master-list archive but is not wired up in any surveyed client or server.
+- The `Ed25519 Authentication` extension (`0x01`, packet `0x41`) is documented in the master-list archive but is not wired up in any surveyed client or server.
 
 ## Sources
 
 - https://www.piqueserver.org/aosprotocol/protocol075.html
 - https://66.135.15.57/masterlistarchive/lsdoc/extensions.html
 - https://66.135.15.57/masterlistarchive/lsdoc/structPacketExtensionInfo.html
-- piqueserver/pyspades/contained.pyx
-- piqueserver/pyspades/loaders.pyx
-- piqueserver/pyspades/constants.py
-- piqueserver/pyspades/master.py
-- piqueserver/pyspades/player.py
-- piqueserver/piqueserver/server.py
-- zerospades/Sources/Client/NetClient.cpp
-- zerospades/Sources/Client/NetClient.h
-- zerospades/Sources/Client/NetProtocol.h
-- zerospades/Sources/Gui/MainScreenHelper.cpp
-- openspades/Sources/Client/NetClient.cpp
-- openspades/Sources/Client/NetClient.h
-- BetterSpades/src/network.c
-- BetterSpades/src/network.h
+- https://66.135.15.57/masterlistarchive/lsdoc/packetByID.html
+- https://66.135.15.57/masterlistarchive/lsdoc/annotated.html
+- [piqueserver](https://www.piqueserver.org): `pyspades/contained.pyx`, `pyspades/loaders.pyx`, `pyspades/constants.py`, `pyspades/master.py`, `pyspades/player.py`, `piqueserver/server.py`
+- [zerospades](https://github.com/siecvi/zerospades): `Sources/Client/NetClient.cpp`, `Sources/Client/NetClient.h`, `Sources/Client/NetProtocol.h`, `Sources/Gui/MainScreenHelper.cpp`
+- [OpenSpades](https://openspades.yvt.jp): `Sources/Client/NetClient.cpp`, `Sources/Client/NetClient.h`
+- [BetterSpades](https://github.com/xtreme8000/BetterSpades): `src/network.c`, `src/network.h`
+- [SpadesX](https://github.com/SpadesX) (no protocol-extension support found)
