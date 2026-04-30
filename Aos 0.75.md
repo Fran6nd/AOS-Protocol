@@ -5,16 +5,17 @@ Wire-format reference for AoS network protocol version 0.75.
 ## Chapters
 
 1. [Summary](#summary) — high-level overview of the protocol.
-2. [Phases](#phases) — the four lifecycle phases of a session.
-3. [Packet Summary](#packet-summary) — one-row-per-packet reference table.
-4. [Packet Details](#packet-details) — byte-level breakdown of every packet.
-5. [Master Server & Serverlist](#master-server--serverlist) — out-of-band server discovery.
-6. [Protocol Extensions](#protocol-extensions) — optional negotiated capabilities layered over the base protocol.
-7. [Sources](#sources) — references used to compile this document.
+2. [Conventions](#conventions) — notation and naming rules used throughout.
+3. [Phases](#phases) — the lifecycle phases of a session.
+4. [Packet Summary](#packet-summary) — one-row-per-packet reference table.
+5. [Packet Details](#packet-details) — byte-level breakdown of every packet.
+6. [Master Server & Serverlist](#master-server--serverlist) — out-of-band server discovery.
+7. [Protocol Extensions](#protocol-extensions) — optional negotiated capabilities layered over the base protocol.
+8. [Sources](#sources) — references used to compile this document.
 
 ## Summary
 
-AoS 0.75 is a stateful, server-authoritative protocol for a 32-slot multiplayer voxel shooter. A session moves through four phases — handshake, map transfer, in-game, disconnect — exchanging fixed-format binary packets identified by a single-byte ID.
+AoS 0.75 is a stateful, server-authoritative protocol for a 32-slot multiplayer voxel shooter. A session moves through four base phases — handshake, map transfer, in-game, disconnect — exchanging fixed-format binary packets identified by a single-byte ID. An optional capability-handshake phase precedes them between extension-aware peers.
 
 - **Transport:** ENet over UDP. ENet handshake version `3` on the game port.
 - **Encoding:** little-endian integers and floats; CP437 strings, NUL-terminated unless explicitly sized.
@@ -23,10 +24,17 @@ AoS 0.75 is a stateful, server-authoritative protocol for a 32-slot multiplayer 
 - **Discovery:** servers register themselves with the master server over ENet; clients fetch the serverlist from it over HTTP and pick a server from the returned JSON. The in-game protocol does not handle discovery — both ends rely on this out-of-band channel to find each other (see [Master Server & Serverlist](#master-server--serverlist)).
 - **Extensions:** an optional pre-game handshake lets a client and server negotiate additional capabilities (extra player stats, larger player cap, richer chat, kick reasons, authentication). Vanilla peers skip it and run on the base protocol (see [Protocol Extensions](#protocol-extensions)).
 
+## Conventions
+
+- **Direction notation:** `S→C` server-to-client, `C→S` client-to-server. `S↔C` and `C↔S` denote bidirectional packets where the left side is the initiator — `C↔S` means the client initiates and the server may echo or relay back; `S↔C` means the server initiates and the client may reply.
+- **Field names:** Packet Summary rows and per-packet detail tables use the same field names; full names (`player_id`, `weapon`, etc.) are used throughout, never abbreviations.
+- **Change markers:** the `Introduced` column shows the version a packet first appeared in. When a packet is altered in a later version, the change is flagged inline as `0.75 → 0.76`.
+
 ## Phases
 
 | Phase | Meaning |
 |---|---|
+| `capability-handshake` *(optional)* | Pre-game phase between extension-aware peers. Runs before `handshake` and negotiates the extension set. Vanilla peers skip it entirely. See [Protocol Extensions](#protocol-extensions). |
 | `handshake` | After ENet connect, before the player is in-game. Covers exchanging player identity and initial game state. |
 | `map-transfer` | Server pushes the compressed map to the client. Bracketed by `Map Start` and the final `State Data`. |
 | `in-game` | Player is alive or spectating in the world; gameplay packets flow. |
@@ -36,40 +44,40 @@ AoS 0.75 is a stateful, server-authoritative protocol for a 32-slot multiplayer 
 
 Packets are grouped by the phase they live in (`handshake` → `map-transfer` → `in-game` → `disconnect`) and ordered logically within each phase: the join sequence first, then movement/input, combat, loadout, world (blocks/grenades/objects), gamemode (CTF/TC), then chat / visuals, then leave.
 
-| Packet Name | Direction | Phase | Structure | Introduced | Trigger | Field Values |
-|---|---|---|---|---|---|---|
-| [State Data](#state-data) | S→C | handshake | `id` u8, `pid` u8, `fog_bgr` u8×3, `team1_bgr` u8×3, `team2_bgr` u8×3, `team1_name` cp437(10), `team2_name` cp437(10), `gamemode` u8, *gamemode state* | 0.75 | Final packet of the join handshake (after the last `Map Chunk`); also delivers gamemode parameters. | `gamemode`: 0=CTF, 1=TC. Trailing payload is `CTF State` (52 B) or `TC State` (variable). |
-| [Existing Player](#existing-player) | S↔C | handshake / in-game | `id` u8, `pid` u8, `team` i8, `weapon` u8, `tool` u8, `kills` u32 LE, `b`/`g`/`r` u8, `name` cp437 (≤16, NUL-terminated) | 0.75 | C→S: new player announces itself on join. S→C: server tells a client about each already-connected player. | `team`: 255=spectator, 0=blue, 1=green. `weapon`: 0=rifle 1=smg 2=shotgun. `tool`: 0=spade 1=block 2=gun 3=grenade. |
-| [Create Player](#create-player) | S→C | handshake / in-game | `id` u8, `pid` u8, `weapon` u8, `team` i8, `x`/`y`/`z` f32 LE, `name` cp437 (NUL-terminated) | 0.75 | Player spawns: first spawn after join, or respawn after death / team change. | Spawn position is in world units. |
-| [Map Start](#map-start) | S→C | map-transfer | `id` u8, `map_size` u32 LE | 0.75 | Server begins sending the map after ENet connect or on map advance. | `map_size` is the byte length of the upcoming compressed map stream (sum of all `Map Chunk` payloads). |
-| [Map Chunk](#map-chunk) | S→C | map-transfer | `id` u8, `data` bytes (DEFLATE/zlib map payload) | 0.75 | Repeated after `Map Start` until the entire compressed map has been transferred; the next packet is `State Data`. | Concatenate all chunk payloads in order, then zlib-decompress to obtain the AOS-format map. |
-| [Position Data](#position-data) | C↔S | in-game | `id` u8, `x`/`y`/`z` f32 LE | 0.75 | Player position changes; client sends, server may set position by sending back. | Coords in world units (0–512 horizontal, 0–63 vertical). |
-| [Orientation Data](#orientation-data) | C↔S | in-game | `id` u8, `x`/`y`/`z` f32 LE | 0.75 | Player view direction changes; server may force orientation. | Unit vector for view direction. |
-| [World Update](#world-update) | S→C | in-game | `id` u8, then 32× (`pos` f32×3, `ori` f32×3) LE | 0.75 | Periodic broadcast of every slot's position + orientation. | Fixed 32-slot array regardless of fill; unused slots may carry stale/zero data. |
-| [Input Data](#input-data) | C→S | in-game | `id` u8, `pid` u8, `keys` u8 (bitfield) | 0.75 | Movement key state changes (press or release). | `keys` bits: 0=up 1=down 2=left 3=right 4=jump 5=crouch 6=sneak 7=sprint. |
-| [Weapon Input](#weapon-input) | C→S | in-game | `id` u8, `pid` u8, `fire` u8 (bitfield) | 0.75 | Primary/secondary fire button state changes. | `fire` bits: 0=primary 1=secondary. |
-| [Hit Packet](#hit-packet) | C→S | in-game | `id` u8, `target_pid` u8, `hit_type` u8 | 0.75 | Client reports it hit another player (client-side hit detection). | `hit_type`: 0=torso 1=head 2=arms 3=legs 4=melee. |
-| [Set HP](#set-hp) | S→C | in-game | `id` u8, `hp` u8, `damage_type` u8, `src_x`/`src_y`/`src_z` f32 LE | 0.75 | Server informs the receiving player their HP changed (after damage). | `damage_type`: 0=fall 1=weapon. `src_*` is damage source position (used to draw hit indicator). |
-| [Weapon Reload](#weapon-reload) | S↔C | in-game | `id` u8, `pid` u8, `clip_ammo` u8, `reserve_ammo` u8 | 0.75 | A player reloads their weapon. | Client sends to start reload; server broadcasts updated counts. |
-| [Kill Action](#kill-action) | S→C | in-game | `id` u8, `victim_pid` u8, `killer_pid` u8, `kill_type` u8, `respawn_time` u8 | 0.75 | A player dies (any cause) or is forcibly removed via team/class change. | `kill_type`: 0=weapon 1=headshot 2=melee 3=grenade 4=fall 5=team change 6=class change. `respawn_time` in seconds. |
-| [Set Tool](#set-tool) | S↔C | in-game | `id` u8, `pid` u8, `tool` u8 | 0.75 | Player switches active tool (1–4 keys). | `tool`: 0=spade 1=block 2=gun 3=grenade. |
-| [Set Colour](#set-colour) | S↔C | in-game | `id` u8, `pid` u8, `b` u8, `g` u8, `r` u8 | 0.75 | Player picks a new block colour. | BGR byte order on the wire. |
-| [Short Player Data](#short-player-data) | S→C | in-game | `id` u8, `pid` u8, `team` i8, `weapon` u8 | 0.75 | Compact roster update (after team/weapon change). | Same `team` / `weapon` enums as `Existing Player`. |
-| [Change Team](#change-team) | C→S | in-game | `id` u8, `pid` u8, `team` i8 | 0.75 | Client requests to switch teams. | Server responds with `Kill Action` (`kill_type=5`) then `Create Player`. `team`: 255=spectator, 0=blue, 1=green. |
-| [Change Weapon](#change-weapon) | C→S | in-game | `id` u8, `pid` u8, `weapon` u8 | 0.75 | Client requests to switch weapons. | Server responds with `Kill Action` (`kill_type=6`) then `Create Player`. `weapon`: 0=rifle, 1=SMG, 2=shotgun. |
-| [Restock](#restock) | S→C | in-game | `id` u8, `pid` u8 | 0.75 | A player restocks at their tent (full ammo, blocks, grenades, HP). | Sent only to the restocked player. |
-| [Block Action](#block-action) | S↔C | in-game | `id` u8, `pid` u8, `action` u8, `x`/`y`/`z` i32 LE | 0.75 | Block placement or destruction. Client sends on action, server validates and broadcasts. | `action`: 0=build, 1=bullet/spade destroy (1 block), 2=spade destroy (3-block column), 3=grenade destroy (3×3×3). |
-| [Block Line](#block-line) | S↔C | in-game | `id` u8, `pid` u8, `start_xyz` i32×3 LE, `end_xyz` i32×3 LE | 0.75 | Client requests a line of blocks between two points (block-tool line draw). | Server fills the voxel line between the two integer block coordinates. |
-| [Grenade Packet](#grenade-packet) | S↔C | in-game | `id` u8, `pid` u8, `fuse` f32 LE, `pos` f32×3 LE, `vel` f32×3 LE | 0.75 | Grenade is thrown. Client sends on throw; server broadcasts to other clients. | `fuse` in seconds; `pos`, `vel` in world units. |
-| [Move Object](#move-object) | S→C | in-game | `id` u8, `object_id` u8, `team` u8, `x`/`y`/`z` f32 LE | 0.75 | A game object (tent or intel) is teleported / repositioned. | `team`: 0=blue, 1=green, 2=neutral. `object_id` enumerates intels and tents (see detail). |
-| [Intel Pickup](#intel-pickup) | S→C | in-game | `id` u8, `pid` u8 | 0.75 | A player picks up the enemy intel (CTF). | Whose intel is implied by team membership. |
-| [Intel Drop](#intel-drop) | S→C | in-game | `id` u8, `pid` u8, `x`/`y`/`z` f32 LE | 0.75 | The intel is dropped (carrier died, switched team, or disconnected). | Position is where the intel landed in the world. |
-| [Intel Capture](#intel-capture) | S→C | in-game | `id` u8, `pid` u8, `winning` u8 | 0.75 | A player scores by bringing the enemy intel home (CTF). | `winning`: 1 if this capture wins the round, else 0. |
-| [Progress Bar](#progress-bar) | S→C | in-game | `id` u8, `tent_id` u8, `capturing_team` u8, `rate` i8, `progress` f32 LE | 0.75 | TC capture progress update for a contested Command Post. | `progress` 0.0–1.0. `rate` in 5%-per-second units; sign indicates direction (positive = capturing team gaining). |
-| [Territory Capture](#territory-capture) | S→C | in-game | `id` u8, `tent_id` u8, `winning` u8, `team` u8 | 0.75 | A team finishes capturing a Command Post in TC mode. | `winning`: 1 if this capture wins the round, else 0. `team`: 0=blue, 1=green. |
-| [Chat Message](#chat-message) | S↔C | in-game | `id` u8, `pid` u8, `chat_type` u8, `message` cp437 (NUL-terminated) | 0.75 | Player sends a chat line; server broadcasts to recipients (filtered by chat type). | `chat_type`: 0=all (white) 1=team (team colour) 2=system (red, server-only). |
-| [Fog Colour](#fog-colour) | S→C | in-game | `id` u8, `alpha` u8, `b` u8, `g` u8, `r` u8 | 0.75 | Server sets the player's fog (sky/horizon) colour. | `alpha` byte is unused. Colour bytes are A,B,G,R order on the wire. |
-| [Player Left](#player-left) | S→C | disconnect | `id` u8, `pid` u8 | 0.75 | A player disconnects (quit, kick, timeout). | Slot becomes free for reuse. |
+| Packet Name | Direction | Phase | Structure | Trigger | Field Values |
+|---|---|---|---|---|---|
+| [State Data](#state-data) | S→C | handshake | `id` u8, `player_id` u8, `fog_bgr` u8×3, `team1_bgr` u8×3, `team2_bgr` u8×3, `team1_name` cp437(10), `team2_name` cp437(10), `gamemode` u8, *gamemode state* | Final packet of the join handshake (after the last `Map Chunk`); also delivers gamemode parameters. | `gamemode`: 0=CTF, 1=TC. Trailing payload is `CTF State` (52 B) or `TC State` (variable). |
+| [Existing Player](#existing-player) | S↔C | handshake / in-game | `id` u8, `player_id` u8, `team` i8, `weapon` u8, `tool` u8, `kills` u32 LE, `blue`/`green`/`red` u8, `name` cp437 (≤16, NUL-terminated) | C→S: new player announces itself on join. S→C: server tells a client about each already-connected player. | `team`: 255=spectator, 0=blue, 1=green. `weapon`: 0=rifle 1=smg 2=shotgun. `tool`: 0=spade 1=block 2=gun 3=grenade. |
+| [Create Player](#create-player) | S→C | handshake / in-game | `id` u8, `player_id` u8, `weapon` u8, `team` i8, `x`/`y`/`z` f32 LE, `name` cp437 (NUL-terminated) | Player spawns: first spawn after join, or respawn after death / team change. | Spawn position is in world units. |
+| [Map Start](#map-start) | S→C | map-transfer | `id` u8, `map_size` u32 LE | Server begins sending the map after ENet connect or on map advance. | `map_size` is the byte length of the upcoming compressed map stream (sum of all `Map Chunk` payloads). |
+| [Map Chunk](#map-chunk) | S→C | map-transfer | `id` u8, `data` bytes (DEFLATE/zlib map payload) | Repeated after `Map Start` until the entire compressed map has been transferred; the next packet is `State Data`. | Concatenate all chunk payloads in order, then zlib-decompress to obtain the AOS-format map. |
+| [Position Data](#position-data) | C↔S | in-game | `id` u8, `x`/`y`/`z` f32 LE | Player position changes; client sends, server may set position by sending back. | Coords in world units (0–512 horizontal, 0–63 vertical). |
+| [Orientation Data](#orientation-data) | C↔S | in-game | `id` u8, `x`/`y`/`z` f32 LE | Player view direction changes; server may force orientation. | Unit vector for view direction. |
+| [World Update](#world-update) | S→C | in-game | `id` u8, then 32× (`pos` f32×3, `ori` f32×3) LE | Periodic broadcast of every slot's position + orientation. | Fixed 32-slot array regardless of fill; unused slots may carry stale/zero data. |
+| [Input Data](#input-data) | C→S | in-game | `id` u8, `player_id` u8, `keys` u8 (bitfield) | Movement key state changes (press or release). | `keys` bits: 0=up 1=down 2=left 3=right 4=jump 5=crouch 6=sneak 7=sprint. |
+| [Weapon Input](#weapon-input) | C→S | in-game | `id` u8, `player_id` u8, `fire` u8 (bitfield) | Primary/secondary fire button state changes. | `fire` bits: 0=primary 1=secondary. |
+| [Hit Packet](#hit-packet) | C→S | in-game | `id` u8, `target_player_id` u8, `hit_type` u8 | Client reports it hit another player (client-side hit detection). | `hit_type`: 0=torso 1=head 2=arms 3=legs 4=melee. |
+| [Set HP](#set-hp) | S→C | in-game | `id` u8, `hp` u8, `damage_type` u8, `src_x`/`src_y`/`src_z` f32 LE | Server informs the receiving player their HP changed (after damage). | `damage_type`: 0=fall 1=weapon. `src_*` is damage source position (used to draw hit indicator). |
+| [Weapon Reload](#weapon-reload) | S↔C | in-game | `id` u8, `player_id` u8, `clip_ammo` u8, `reserve_ammo` u8 | A player reloads their weapon. | Client sends to start reload; server broadcasts updated counts. |
+| [Kill Action](#kill-action) | S→C | in-game | `id` u8, `victim_player_id` u8, `killer_player_id` u8, `kill_type` u8, `respawn_time` u8 | A player dies (any cause) or is forcibly removed via team/class change. | `kill_type`: 0=weapon 1=headshot 2=melee 3=grenade 4=fall 5=team change 6=class change. `respawn_time` in seconds. |
+| [Set Tool](#set-tool) | S↔C | in-game | `id` u8, `player_id` u8, `tool` u8 | Player switches active tool (1–4 keys). | `tool`: 0=spade 1=block 2=gun 3=grenade. |
+| [Set Colour](#set-colour) | S↔C | in-game | `id` u8, `player_id` u8, `blue` u8, `green` u8, `red` u8 | Player picks a new block colour. | BGR byte order on the wire. |
+| [Short Player Data](#short-player-data) | S→C | in-game | `id` u8, `player_id` u8, `team` i8, `weapon` u8 | Compact roster update (after team/weapon change). | Same `team` / `weapon` enums as `Existing Player`. |
+| [Change Team](#change-team) | C→S | in-game | `id` u8, `player_id` u8, `team` i8 | Client requests to switch teams. | Server responds with `Kill Action` (`kill_type=5`) then `Create Player`. `team`: 255=spectator, 0=blue, 1=green. |
+| [Change Weapon](#change-weapon) | C→S | in-game | `id` u8, `player_id` u8, `weapon` u8 | Client requests to switch weapons. | Server responds with `Kill Action` (`kill_type=6`) then `Create Player`. `weapon`: 0=rifle, 1=SMG, 2=shotgun. |
+| [Restock](#restock) | S→C | in-game | `id` u8, `player_id` u8 | A player restocks at their tent (full ammo, blocks, grenades, HP). | Sent only to the restocked player. |
+| [Block Action](#block-action) | S↔C | in-game | `id` u8, `player_id` u8, `action` u8, `x`/`y`/`z` i32 LE | Block placement or destruction. Client sends on action, server validates and broadcasts. | `action`: 0=build, 1=bullet/spade destroy (1 block), 2=spade destroy (3-block column), 3=grenade destroy (3×3×3). |
+| [Block Line](#block-line) | S↔C | in-game | `id` u8, `player_id` u8, `start_xyz` i32×3 LE, `end_xyz` i32×3 LE | Client requests a line of blocks between two points (block-tool line draw). | Server fills the voxel line between the two integer block coordinates. |
+| [Grenade Packet](#grenade-packet) | S↔C | in-game | `id` u8, `player_id` u8, `fuse` f32 LE, `pos` f32×3 LE, `vel` f32×3 LE | Grenade is thrown. Client sends on throw; server broadcasts to other clients. | `fuse` in seconds; `pos`, `vel` in world units. |
+| [Move Object](#move-object) | S→C | in-game | `id` u8, `object_id` u8, `team` u8, `x`/`y`/`z` f32 LE | A game object (tent or intel) is teleported / repositioned. | `team`: 0=blue, 1=green, 2=neutral. `object_id` enumerates intels and tents (see detail). |
+| [Intel Pickup](#intel-pickup) | S→C | in-game | `id` u8, `player_id` u8 | A player picks up the enemy intel (CTF). | Whose intel is implied by team membership. |
+| [Intel Drop](#intel-drop) | S→C | in-game | `id` u8, `player_id` u8, `x`/`y`/`z` f32 LE | The intel is dropped (carrier died, switched team, or disconnected). | Position is where the intel landed in the world. |
+| [Intel Capture](#intel-capture) | S→C | in-game | `id` u8, `player_id` u8, `winning` u8 | A player scores by bringing the enemy intel home (CTF). | `winning`: 1 if this capture wins the round, else 0. |
+| [Progress Bar](#progress-bar) | S→C | in-game | `id` u8, `tent_id` u8, `capturing_team` u8, `rate` i8, `progress` f32 LE | TC capture progress update for a contested Command Post. | `progress` 0.0–1.0. `rate` in 5%-per-second units; sign indicates direction (positive = capturing team gaining). |
+| [Territory Capture](#territory-capture) | S→C | in-game | `id` u8, `tent_id` u8, `winning` u8, `team` u8 | A team finishes capturing a Command Post in TC mode. | `winning`: 1 if this capture wins the round, else 0. `team`: 0=blue, 1=green. |
+| [Chat Message](#chat-message) | S↔C | in-game | `id` u8, `player_id` u8, `chat_type` u8, `message` cp437 (NUL-terminated) | Player sends a chat line; server broadcasts to recipients (filtered by chat type). | `chat_type`: 0=all (white) 1=team (team colour) 2=system (red, server-only). |
+| [Fog Colour](#fog-colour) | S→C | in-game | `id` u8, `alpha` u8, `blue` u8, `green` u8, `red` u8 | Server sets the player's fog (sky/horizon) colour. | `alpha` byte is unused. Colour bytes are A,B,G,R order on the wire. |
+| [Player Left](#player-left) | S→C | disconnect | `id` u8, `player_id` u8 | A player disconnects (quit, kick, timeout). | Slot becomes free for reuse. |
 
 ## Packet Details
 
@@ -178,7 +186,7 @@ The client concatenates all `data` payloads in order, then zlib-decompresses to 
 | 0 | `packet_id` | u8 | `0x00` |
 | 1 | `x` | f32 LE | world X (0.0 – 512.0) |
 | 5 | `y` | f32 LE | world Y (0.0 – 512.0) |
-| 9 | `z` | f32 LE | world Z, vertical axis (downward positive in 0.75 maps; ~0 at the sky, ~63 at solid ground) |
+| 9 | `z` | f32 LE | world Z, vertical axis (downward positive; ~0 at the sky, ~63 at solid ground) |
 
 ### Orientation Data
 
@@ -297,8 +305,8 @@ Note: this shares packet ID `0x05` with `Hit Packet`. Direction disambiguates th
 | Offset | Field | Type | Description |
 |---|---|---|---|
 | 0 | `packet_id` | u8 | `0x10` |
-| 1 | `victim_pid` | u8 | who died |
-| 2 | `killer_pid` | u8 | attributed killer (= `victim_pid` for self-inflicted causes) |
+| 1 | `victim_player_id` | u8 | who died |
+| 2 | `killer_player_id` | u8 | attributed killer (= `victim_player_id` for self-inflicted causes) |
 | 3 | `kill_type` | u8 | see enum below |
 | 4 | `respawn_time` | u8 | seconds until the victim respawns |
 
@@ -636,16 +644,12 @@ Same column schema as [Packet Summary](#packet-summary). The `Introduced` column
 | [Version Request](#version-request) | S→C | handshake | `id` u8 | any | Sent after receiving `Handshake Return`. | No payload. |
 | [Version Response](#version-response) | C→S | handshake | `id` u8, `client` u8, `major`/`minor`/`patch` u8, `os_info` cp437 (NUL-terminated) | any | Client reply to `Version Request`. | `client`: `'o'`=zerospades / OpenSpades, `'B'`=BetterSpades, `'a'`=ACE. |
 | [Protocol Extension Info](#protocol-extension-info) | S↔C | handshake | `id` u8, `count` u8, `count` × (u8 `id`, u8 `version`) | any | Once per peer, after `Version Response`. | Intersection of both lists is the active extension set for the session. |
-| [Player Properties](#player-properties-extension-0x00-packet-0x40) | S→C | in-game | `id` u8, `sub_id` u8, `pid` u8, `hp` u8, `blocks` u8, `grenades` u8, `ammo_clip` u8, `ammo_reserve` u8, `score` u32 LE | any | Server pushes when a tracked stat changes. | Extension `0x00`. `sub_id` always `0`. |
+| [Player Properties](#player-properties-extension-0x00-packet-0x40) | S→C | in-game | `id` u8, `sub_id` u8, `player_id` u8, `hp` u8, `blocks` u8, `grenades` u8, `ammo_clip` u8, `ammo_reserve` u8, `score` u32 LE | any | Server pushes when a tracked stat changes. | Extension `0x00`. `sub_id` always `0`. |
 | [Ed25519 Authentication](#ed25519-authentication-extension-0x01-packet-0x41) | S↔C | handshake | `id` u8, `sub_id` u8, *sub-ID-dependent payload* | any | `sub_id` 0–4 carry the auth-handshake stages. | Extension `0x01`. Documented but not implemented in surveyed code. |
 
-### Negotiation
+### Capability Handshake Packets
 
-After ENet connect, an extension-aware server runs a four-packet pre-game handshake (Handshake Init/Return, then Version Request/Response) before the base protocol's `Map Start`. A vanilla 0.75 client/server skips this entirely and proceeds straight to the map transfer. Once both sides have identified themselves with `Version Response`, each sends a `Protocol Extension Info` packet listing the extension IDs it supports; the intersection of the two lists is the set of extensions honoured for the rest of the session.
-
-### Extension Handshake Packets
-
-These four packets exist only between extension-aware peers and run before any base-protocol traffic. They share IDs `31`–`34` (`0x1F`–`0x22`).
+These four packets exist only between extension-aware peers and run before any base-protocol traffic. They share IDs `31`–`34` (`0x1F`–`0x22`). They define the optional `capability-handshake` phase listed in [Phases](#phases).
 
 #### Handshake Init
 
@@ -655,8 +659,6 @@ These four packets exist only between extension-aware peers and run before any b
 |---|---|---|---|
 | 0 | `packet_id` | u8 | `0x1F` |
 | 1 | `challenge` | u32 LE | challenge value (piqueserver uses `42`); echoed back in `Handshake Return`. |
-
-In 0.76 this ID also identifies `Map Cached`. Disambiguation is by phase — `Handshake Init` precedes `Map Start`; `Map Cached` only ever follows it.
 
 #### Handshake Return
 
@@ -699,6 +701,10 @@ In 0.76 this ID also identifies `Map Cached`. Disambiguation is by phase — `Ha
 | 0 | `packet_id` | u8 | `0x3C` |
 | 1 | `count` | u8 | number of extension entries that follow |
 | 2 | `entries` | `count` × (u8 `id`, u8 `version`) | supported extensions |
+
+### Negotiation
+
+After ENet connect, an extension-aware server runs the four-packet **capability handshake** (`Handshake Init`/`Handshake Return`, then `Version Request`/`Version Response`) before the base protocol's `Map Start`. A vanilla client/server skips this entirely and proceeds straight to the map transfer. Once both sides have identified themselves with `Version Response`, each sends a `Protocol Extension Info` packet listing the extension IDs it supports; the intersection of the two lists is the set of extensions honoured for the rest of the session.
 
 ### Defined Extensions
 
