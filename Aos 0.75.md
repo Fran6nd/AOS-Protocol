@@ -665,13 +665,12 @@ Extension IDs split into two ranges:
 
 Drawn from the source trees listed in [Sources](#sources). `✓` = advertises the extension; `–` = does not.
 
-| Implementation | Side | `0x00` Player Properties | `0xC0` 256 Players | `0xC1` Message Types | `0xC2` Kick Reason |
+| Extension | piqueserver (S) | SpadesX (S) | BetterSpades (C) | zerospades (C) | OpenSpades (C) |
 |---|---|---|---|---|---|
-| piqueserver | Server | – | – | ✓ | – |
-| SpadesX | Server | – | – | – | – |
-| BetterSpades | Client | ✓ | ✓ | ✓ | ✓ |
-| zerospades | Client | ✓ | ✓ | – | ✓ |
-| OpenSpades | Client | – | ✓ | – | – |
+| `0x00` Player Properties | – | – | ✓ | ✓ | – |
+| `0xC0` 256 Players | – | – | ✓ | ✓ | ✓ |
+| `0xC1` Message Types | ✓ | – | ✓ | – | – |
+| `0xC2` Kick Reason | – | – | ✓ | ✓ | – |
 
 Notes:
 
